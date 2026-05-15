@@ -33,6 +33,10 @@ public class PacketBlockUtil {
     private static final int LIGHT_SECTION_HEIGHT = 16;
     private static final int LIGHT_SECTION_VOLUME = 16 * 16 * 16;
     private static final int LIGHT_ARRAY_SIZE = LIGHT_SECTION_VOLUME / 2;
+    private static final int LIGHT_Y_INDEX_SHIFT = 8;
+    private static final int LIGHT_Z_INDEX_SHIFT = 4;
+    private static final int LIGHT_HIGH_NIBBLE_SHIFT = 4;
+    private static final int LIGHT_NIBBLE_MASK = 0xF;
     private static final int LIGHT_MASK_SECTION_OFFSET = 1;
     private static final int SINGLE_LIGHT_SECTION_COUNT = 1;
     private static final boolean EXCLUDE_MAX_BLOCK_Y = false;
@@ -253,7 +257,6 @@ public class PacketBlockUtil {
     private static byte[] createLightArray(@NonNull ChunkSnapshot chunkSnapshot, int sectionY, boolean skyLight) {
         byte[] lightArray = new byte[LIGHT_ARRAY_SIZE];
         int baseY = sectionY * LIGHT_SECTION_HEIGHT;
-        int blockIndex = 0;
 
         for (int y = 0; y < LIGHT_SECTION_HEIGHT; y++) {
             for (int z = 0; z < LIGHT_SECTION_HEIGHT; z++) {
@@ -261,21 +264,24 @@ public class PacketBlockUtil {
                     int lightLevel = skyLight
                             ? chunkSnapshot.getBlockSkyLight(x, baseY + y, z)
                             : chunkSnapshot.getBlockEmittedLight(x, baseY + y, z);
-
-                    int arrayIndex = blockIndex >> 1;
-
-                    if ((blockIndex & 1) == 0) {
-                        lightArray[arrayIndex] = (byte) (lightLevel & 0xF);
-                    } else {
-                        lightArray[arrayIndex] |= (byte) ((lightLevel & 0xF) << 4);
-                    }
-
-                    blockIndex++;
+                    int blockIndex = (y << LIGHT_Y_INDEX_SHIFT) | (z << LIGHT_Z_INDEX_SHIFT) | x;
+                    setLightLevel(lightArray, blockIndex, lightLevel);
                 }
             }
         }
 
         return lightArray;
+    }
+
+    private static void setLightLevel(byte[] lightArray, int blockIndex, int lightLevel) {
+        int arrayIndex = blockIndex >> 1;
+
+        if ((blockIndex & 1) == 0) {
+            lightArray[arrayIndex] = (byte) ((lightArray[arrayIndex] & 0xF0) | (lightLevel & LIGHT_NIBBLE_MASK));
+            return;
+        }
+
+        lightArray[arrayIndex] = (byte) ((lightArray[arrayIndex] & LIGHT_NIBBLE_MASK) | ((lightLevel & LIGHT_NIBBLE_MASK) << LIGHT_HIGH_NIBBLE_SHIFT));
     }
 
     private record ChunkSectionPosition(int chunkX, int sectionY, int chunkZ) {
