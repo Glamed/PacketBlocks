@@ -1,11 +1,16 @@
 package net.bitbylogic.packetblocks.util;
 
+import com.github.retrooper.packetevents.PacketEvents;
+import com.github.retrooper.packetevents.protocol.world.chunk.LightData;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerUpdateLight;
 import lombok.NonNull;
 import net.bitbylogic.packetblocks.PacketBlocks;
 import net.bitbylogic.packetblocks.block.PacketBlock;
 import net.bitbylogic.packetblocks.block.PacketBlockHolder;
 import net.bitbylogic.packetblocks.block.PacketBlockManager;
 import net.bitbylogic.packetblocks.group.PacketBlockGroup;
+import org.bukkit.Chunk;
+import org.bukkit.ChunkSnapshot;
 import org.bukkit.FluidCollisionMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -17,9 +22,17 @@ import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.BitSet;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.Optional;
+import java.util.Set;
 
 public class PacketBlockUtil {
+
+    private static final int LIGHT_SECTION_HEIGHT = 16;
+    private static final int LIGHT_SECTION_VOLUME = 16 * 16 * 16;
+    private static final int LIGHT_ARRAY_SIZE = LIGHT_SECTION_VOLUME / 2;
 
     public static BlockData getBlockData(@Nullable Player player, @NonNull Location location) {
         if(location.getWorld() == null) {
@@ -163,6 +176,101 @@ public class PacketBlockUtil {
         }
 
         return vanillaResult;
+    }
+
+    public static void sendLightUpdate(@NonNull Player player, @NonNull Location location) {
+        World world = location.getWorld();
+
+        if (world == null || !player.getWorld().equals(world)) {
+            return;
+        }
+
+        int chunkX = location.getBlockX() >> 4;
+        int chunkZ = location.getBlockZ() >> 4;
+
+        if (!world.isChunkLoaded(chunkX, chunkZ)) {
+            return;
+        }
+
+        Chunk chunk = world.getChunkAt(chunkX, chunkZ);
+        int sectionY = location.getBlockY() >> 4;
+        ChunkSnapshot chunkSnapshot = chunk.getChunkSnapshot(false, false, false, true);
+        LightData lightData = createLightData(world, chunkSnapshot, sectionY);
+
+        PacketEvents.getAPI().getPlayerManager().sendPacket(player,
+                new WrapperPlayServerUpdateLight(chunkX, chunkZ, lightData));
+    }
+
+    public static void sendLightUpdates(@NonNull Player player, @NonNull Collection<Location> locations) {
+        Set<ChunkSectionPosition> updatedSections = new HashSet<>();
+
+        for (Location location : locations) {
+            if (location.getWorld() == null || !location.getWorld().equals(player.getWorld())) {
+                continue;
+            }
+
+            if (!updatedSections.add(ChunkSectionPosition.of(location))) {
+                continue;
+            }
+
+            sendLightUpdate(player, location);
+        }
+    }
+
+    private static LightData createLightData(@NonNull World world, @NonNull ChunkSnapshot chunkSnapshot, int sectionY) {
+        BitSet skyLightMask = new BitSet();
+        BitSet blockLightMask = new BitSet();
+        int lightSectionIndex = sectionY - (world.getMinHeight() >> 4) + 1;
+
+        skyLightMask.set(lightSectionIndex);
+        blockLightMask.set(lightSectionIndex);
+
+        return new LightData(
+                true,
+                blockLightMask,
+                skyLightMask,
+                new BitSet(),
+                new BitSet(),
+                1,
+                1,
+                new byte[][]{createLightArray(chunkSnapshot, sectionY, true)},
+                new byte[][]{createLightArray(chunkSnapshot, sectionY, false)}
+        );
+    }
+
+    private static byte[] createLightArray(@NonNull ChunkSnapshot chunkSnapshot, int sectionY, boolean skyLight) {
+        byte[] lightArray = new byte[LIGHT_ARRAY_SIZE];
+        int baseY = sectionY * LIGHT_SECTION_HEIGHT;
+        int blockIndex = 0;
+
+        for (int y = 0; y < LIGHT_SECTION_HEIGHT; y++) {
+            for (int z = 0; z < LIGHT_SECTION_HEIGHT; z++) {
+                for (int x = 0; x < LIGHT_SECTION_HEIGHT; x++) {
+                    int lightLevel = skyLight
+                            ? chunkSnapshot.getBlockSkyLight(x, baseY + y, z)
+                            : chunkSnapshot.getBlockEmittedLight(x, baseY + y, z);
+
+                    int arrayIndex = blockIndex >> 1;
+
+                    if ((blockIndex & 1) == 0) {
+                        lightArray[arrayIndex] = (byte) (lightLevel & 0xF);
+                    } else {
+                        lightArray[arrayIndex] |= (byte) ((lightLevel & 0xF) << 4);
+                    }
+
+                    blockIndex++;
+                }
+            }
+        }
+
+        return lightArray;
+    }
+
+    private record ChunkSectionPosition(int chunkX, int sectionY, int chunkZ) {
+
+        private static ChunkSectionPosition of(Location location) {
+            return new ChunkSectionPosition(location.getBlockX() >> 4, location.getBlockY() >> 4, location.getBlockZ() >> 4);
+        }
     }
 
 }

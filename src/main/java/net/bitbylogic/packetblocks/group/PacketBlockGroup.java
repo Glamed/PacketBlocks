@@ -7,6 +7,7 @@ import net.bitbylogic.packetblocks.block.PacketBlockManager;
 import net.bitbylogic.packetblocks.data.DataHandler;
 import net.bitbylogic.packetblocks.metadata.MetadataHandler;
 import net.bitbylogic.packetblocks.util.BoundingBoxes;
+import net.bitbylogic.packetblocks.util.PacketBlockUtil;
 import net.bitbylogic.packetblocks.viewer.ViewerHandler;
 import net.bitbylogic.packetblocks.viewer.impl.GroupPacketBlockViewer;
 import net.bitbylogic.utils.location.ChunkPosition;
@@ -240,7 +241,9 @@ public class PacketBlockGroup implements PacketBlockHolder<Map<WorldPosition, Bl
      */
     @Override
     public void sendUpdate(@NonNull Player player) {
-        player.sendBlockChanges(getBlockStates(player));
+        List<BlockState> states = getBlockStates(player);
+        player.sendBlockChanges(states);
+        PacketBlockUtil.sendLightUpdates(player, states.stream().map(BlockState::getLocation).toList());
     }
 
     @Override

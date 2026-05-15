@@ -63,6 +63,7 @@ public class PacketBlockListener implements Listener {
                 });
 
         player.sendBlockChanges(states);
+        PacketBlockUtil.sendLightUpdates(player, states.stream().map(BlockState::getLocation).toList());
     }
 
     @EventHandler
@@ -91,6 +92,7 @@ public class PacketBlockListener implements Listener {
                 });
 
         player.sendBlockChanges(states);
+        PacketBlockUtil.sendLightUpdates(player, states.stream().map(BlockState::getLocation).toList());
     }
 
     @EventHandler
