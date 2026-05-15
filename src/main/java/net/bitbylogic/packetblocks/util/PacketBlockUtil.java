@@ -1,11 +1,16 @@
 package net.bitbylogic.packetblocks.util;
 
+import com.github.retrooper.packetevents.PacketEvents;
+import com.github.retrooper.packetevents.protocol.world.chunk.LightData;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerUpdateLight;
 import lombok.NonNull;
 import net.bitbylogic.packetblocks.PacketBlocks;
 import net.bitbylogic.packetblocks.block.PacketBlock;
 import net.bitbylogic.packetblocks.block.PacketBlockHolder;
 import net.bitbylogic.packetblocks.block.PacketBlockManager;
 import net.bitbylogic.packetblocks.group.PacketBlockGroup;
+import org.bukkit.Chunk;
+import org.bukkit.ChunkSnapshot;
 import org.bukkit.FluidCollisionMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -17,9 +22,28 @@ import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.BitSet;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.Optional;
+import java.util.Set;
 
 public class PacketBlockUtil {
+
+    private static final int LIGHT_SECTION_HEIGHT = 16;
+    private static final int LIGHT_SECTION_VOLUME = 16 * 16 * 16;
+    private static final int LIGHT_ARRAY_SIZE = LIGHT_SECTION_VOLUME / 2;
+    private static final int LIGHT_Y_INDEX_SHIFT = 8;
+    private static final int LIGHT_Z_INDEX_SHIFT = 4;
+    private static final int LIGHT_HIGH_NIBBLE_SHIFT = 4;
+    private static final int LIGHT_NIBBLE_MASK = 0xF;
+    private static final int LIGHT_MASK_SECTION_OFFSET = 1;
+    private static final int SINGLE_LIGHT_SECTION_COUNT = 1;
+    private static final boolean EXCLUDE_MAX_BLOCK_Y = false;
+    private static final boolean EXCLUDE_BIOME_DATA = false;
+    private static final boolean EXCLUDE_TEMPERATURE_DATA = false;
+    private static final boolean INCLUDE_LIGHT_DATA = true;
+    private static final boolean TRUST_EDGES = true;
 
     public static BlockData getBlockData(@Nullable Player player, @NonNull Location location) {
         if(location.getWorld() == null) {
@@ -163,6 +187,108 @@ public class PacketBlockUtil {
         }
 
         return vanillaResult;
+    }
+
+    public static void sendLightUpdate(@NonNull Player player, @NonNull Location location) {
+        World world = location.getWorld();
+
+        if (world == null || !player.getWorld().equals(world)) {
+            return;
+        }
+
+        int chunkX = location.getBlockX() >> 4;
+        int chunkZ = location.getBlockZ() >> 4;
+
+        if (!world.isChunkLoaded(chunkX, chunkZ)) {
+            return;
+        }
+
+        Chunk chunk = world.getChunkAt(chunkX, chunkZ);
+        int sectionY = location.getBlockY() >> 4;
+        ChunkSnapshot chunkSnapshot = chunk.getChunkSnapshot(
+                EXCLUDE_MAX_BLOCK_Y,
+                EXCLUDE_BIOME_DATA,
+                EXCLUDE_TEMPERATURE_DATA,
+                INCLUDE_LIGHT_DATA
+        );
+        LightData lightData = createLightData(world, chunkSnapshot, sectionY);
+
+        PacketEvents.getAPI().getPlayerManager().sendPacket(player,
+                new WrapperPlayServerUpdateLight(chunkX, chunkZ, lightData));
+    }
+
+    public static void sendLightUpdates(@NonNull Player player, @NonNull Collection<Location> locations) {
+        Set<ChunkSectionPosition> updatedSections = new HashSet<>();
+
+        for (Location location : locations) {
+            if (location.getWorld() == null || !location.getWorld().equals(player.getWorld())) {
+                continue;
+            }
+
+            if (!updatedSections.add(ChunkSectionPosition.of(location))) {
+                continue;
+            }
+
+            sendLightUpdate(player, location);
+        }
+    }
+
+    private static LightData createLightData(@NonNull World world, @NonNull ChunkSnapshot chunkSnapshot, int sectionY) {
+        BitSet skyLightMask = new BitSet();
+        BitSet blockLightMask = new BitSet();
+        int lightSectionIndex = sectionY - (world.getMinHeight() >> 4) + LIGHT_MASK_SECTION_OFFSET;
+
+        skyLightMask.set(lightSectionIndex);
+        blockLightMask.set(lightSectionIndex);
+
+        return new LightData(
+                TRUST_EDGES,
+                blockLightMask,
+                skyLightMask,
+                new BitSet(),
+                new BitSet(),
+                SINGLE_LIGHT_SECTION_COUNT,
+                SINGLE_LIGHT_SECTION_COUNT,
+                new byte[][]{createLightArray(chunkSnapshot, sectionY, true)},
+                new byte[][]{createLightArray(chunkSnapshot, sectionY, false)}
+        );
+    }
+
+    private static byte[] createLightArray(@NonNull ChunkSnapshot chunkSnapshot, int sectionY, boolean skyLight) {
+        byte[] lightArray = new byte[LIGHT_ARRAY_SIZE];
+        int baseY = sectionY * LIGHT_SECTION_HEIGHT;
+
+        for (int y = 0; y < LIGHT_SECTION_HEIGHT; y++) {
+            for (int z = 0; z < LIGHT_SECTION_HEIGHT; z++) {
+                for (int x = 0; x < LIGHT_SECTION_HEIGHT; x++) {
+                    int lightLevel = skyLight
+                            ? chunkSnapshot.getBlockSkyLight(x, baseY + y, z)
+                            : chunkSnapshot.getBlockEmittedLight(x, baseY + y, z);
+                    int blockIndex = (y << LIGHT_Y_INDEX_SHIFT) | (z << LIGHT_Z_INDEX_SHIFT) | x;
+                    setLightLevel(lightArray, blockIndex, lightLevel);
+                }
+            }
+        }
+
+        return lightArray;
+    }
+
+    private static void setLightLevel(byte[] lightArray, int blockIndex, int lightLevel) {
+        int arrayIndex = blockIndex >> 1;
+
+        if ((blockIndex & 1) == 0) {
+            lightArray[arrayIndex] = (byte) ((lightArray[arrayIndex] & 0xF0) | (lightLevel & LIGHT_NIBBLE_MASK));
+            return;
+        }
+
+        lightArray[arrayIndex] = (byte) ((lightArray[arrayIndex] & LIGHT_NIBBLE_MASK) | ((lightLevel & LIGHT_NIBBLE_MASK) << LIGHT_HIGH_NIBBLE_SHIFT));
+    }
+
+    private record ChunkSectionPosition(int chunkX, int sectionY, int chunkZ) {
+
+        private static ChunkSectionPosition of(Location location) {
+            return new ChunkSectionPosition(location.getBlockX() >> 4, location.getBlockY() >> 4, location.getBlockZ() >> 4);
+        }
     }
 
 }

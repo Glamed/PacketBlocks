@@ -7,6 +7,7 @@ import net.bitbylogic.packetblocks.data.DataHandler;
 import net.bitbylogic.packetblocks.event.PacketBlockBreakEvent;
 import net.bitbylogic.packetblocks.metadata.MetadataHandler;
 import net.bitbylogic.packetblocks.util.BoundingBoxes;
+import net.bitbylogic.packetblocks.util.PacketBlockUtil;
 import net.bitbylogic.packetblocks.viewer.ViewerHandler;
 import net.bitbylogic.packetblocks.viewer.impl.SinglePacketBlockViewer;
 import net.bitbylogic.utils.location.ChunkPosition;
@@ -95,6 +96,7 @@ public class PacketBlock implements PacketBlockHolder<BlockData, SinglePacketBlo
     @Override
     public void sendUpdate(@NonNull Player player) {
         player.sendBlockChange(location, getData(player));
+        PacketBlockUtil.sendLightUpdate(player, location);
     }
 
     /**
