@@ -33,6 +33,13 @@ public class PacketBlockUtil {
     private static final int LIGHT_SECTION_HEIGHT = 16;
     private static final int LIGHT_SECTION_VOLUME = 16 * 16 * 16;
     private static final int LIGHT_ARRAY_SIZE = LIGHT_SECTION_VOLUME / 2;
+    private static final int LIGHT_MASK_SECTION_OFFSET = 1;
+    private static final int SINGLE_LIGHT_SECTION_COUNT = 1;
+    private static final boolean EXCLUDE_MAX_BLOCK_Y = false;
+    private static final boolean EXCLUDE_BIOME_DATA = false;
+    private static final boolean EXCLUDE_TEMPERATURE_DATA = false;
+    private static final boolean INCLUDE_LIGHT_DATA = true;
+    private static final boolean TRUST_EDGES = true;
 
     public static BlockData getBlockData(@Nullable Player player, @NonNull Location location) {
         if(location.getWorld() == null) {
@@ -194,7 +201,12 @@ public class PacketBlockUtil {
 
         Chunk chunk = world.getChunkAt(chunkX, chunkZ);
         int sectionY = location.getBlockY() >> 4;
-        ChunkSnapshot chunkSnapshot = chunk.getChunkSnapshot(false, false, false, true);
+        ChunkSnapshot chunkSnapshot = chunk.getChunkSnapshot(
+                EXCLUDE_MAX_BLOCK_Y,
+                EXCLUDE_BIOME_DATA,
+                EXCLUDE_TEMPERATURE_DATA,
+                INCLUDE_LIGHT_DATA
+        );
         LightData lightData = createLightData(world, chunkSnapshot, sectionY);
 
         PacketEvents.getAPI().getPlayerManager().sendPacket(player,
@@ -220,19 +232,19 @@ public class PacketBlockUtil {
     private static LightData createLightData(@NonNull World world, @NonNull ChunkSnapshot chunkSnapshot, int sectionY) {
         BitSet skyLightMask = new BitSet();
         BitSet blockLightMask = new BitSet();
-        int lightSectionIndex = sectionY - (world.getMinHeight() >> 4) + 1;
+        int lightSectionIndex = sectionY - (world.getMinHeight() >> 4) + LIGHT_MASK_SECTION_OFFSET;
 
         skyLightMask.set(lightSectionIndex);
         blockLightMask.set(lightSectionIndex);
 
         return new LightData(
-                true,
+                TRUST_EDGES,
                 blockLightMask,
                 skyLightMask,
                 new BitSet(),
                 new BitSet(),
-                1,
-                1,
+                SINGLE_LIGHT_SECTION_COUNT,
+                SINGLE_LIGHT_SECTION_COUNT,
                 new byte[][]{createLightArray(chunkSnapshot, sectionY, true)},
                 new byte[][]{createLightArray(chunkSnapshot, sectionY, false)}
         );
